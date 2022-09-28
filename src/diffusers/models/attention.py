@@ -1,9 +1,27 @@
 import math
-from typing import Optional
+import os
+from inspect import isfunction
+from typing import Any, Optional
 
 import torch
 import torch.nn.functional as F
 from torch import nn
+
+import xformers
+import xformers.ops
+
+
+_USE_MEMORY_EFFICIENT_ATTENTION = 1
+
+
+def exists(val):
+    return val is not None
+
+
+def default(val, d):
+    if exists(val):
+        return val
+    return d() if isfunction(d) else d
 
 
 class AttentionBlock(nn.Module):
@@ -144,11 +162,10 @@ class SpatialTransformer(nn.Module):
         residual = hidden_states
         hidden_states = self.norm(hidden_states)
         hidden_states = self.proj_in(hidden_states)
-        inner_dim = hidden_states.shape[1]
-        hidden_states = hidden_states.permute(0, 2, 3, 1).reshape(batch, height * weight, inner_dim)
+        hidden_states = hidden_states.permute(0, 2, 3, 1).reshape(batch, height * weight, channel)
         for block in self.transformer_blocks:
             hidden_states = block(hidden_states, context=context)
-        hidden_states = hidden_states.reshape(batch, height, weight, inner_dim).permute(0, 3, 1, 2)
+        hidden_states = hidden_states.reshape(batch, height, weight, channel).permute(0, 3, 1, 2)
         hidden_states = self.proj_out(hidden_states)
         return hidden_states + residual
 
@@ -178,11 +195,12 @@ class BasicTransformerBlock(nn.Module):
         checkpoint: bool = True,
     ):
         super().__init__()
-        self.attn1 = CrossAttention(
+        AttentionBuilder = MemoryEfficientCrossAttention if _USE_MEMORY_EFFICIENT_ATTENTION else CrossAttention
+        self.attn1 = AttentionBuilder(
             query_dim=dim, heads=n_heads, dim_head=d_head, dropout=dropout
         )  # is a self-attention
         self.ff = FeedForward(dim, dropout=dropout, glu=gated_ff)
-        self.attn2 = CrossAttention(
+        self.attn2 = AttentionBuilder(
             query_dim=dim, context_dim=context_dim, heads=n_heads, dim_head=d_head, dropout=dropout
         )  # is self-attn if context is none
         self.norm1 = nn.LayerNorm(dim)
@@ -201,6 +219,112 @@ class BasicTransformerBlock(nn.Module):
         hidden_states = self.ff(self.norm3(hidden_states)) + hidden_states
         return hidden_states
 
+
+class MemoryEfficientCrossAttention(nn.Module):
+    def __init__(self, query_dim, context_dim=None, heads=8, dim_head=64, dropout=0.0):
+        super().__init__()
+        inner_dim = dim_head * heads
+        context_dim = default(context_dim, query_dim)
+
+        self.scale = dim_head**-0.5
+        self.heads = heads
+        self.dim_head = dim_head
+
+        self.to_q = nn.Linear(query_dim, inner_dim, bias=False)
+        self.to_k = nn.Linear(context_dim, inner_dim, bias=False)
+        self.to_v = nn.Linear(context_dim, inner_dim, bias=False)
+
+        self.to_out = nn.Sequential(nn.Linear(inner_dim, query_dim), nn.Dropout(dropout))
+        self.attention_op: Optional[Any] = None
+
+    def _maybe_init(self, x):
+        """
+        Initialize the attention operator, if required We expect the head dimension to be exposed here, meaning that x
+        : B, Head, Length
+        """
+        if self.attention_op is not None:
+            return
+
+        _, M, K = x.shape
+        try:
+            self.attention_op = xformers.ops.AttentionOpDispatch(
+                dtype=x.dtype,
+                device=x.device,
+                k=K,
+                attn_bias_type=type(None),
+                has_dropout=False,
+                kv_len=M,
+                q_len=M,
+            ).op
+
+        except NotImplementedError as err:
+            raise NotImplementedError(f"Please install xformers with the flash attention / cutlass components.\n{err}")
+
+    def forward(self, x, context=None, mask=None):
+
+
+        q = self.to_q(x)
+        context = default(context, x)
+        k = self.to_k(context)
+        v = self.to_v(context)
+        
+
+
+        b, _, _ = q.shape
+        q, k, v = map(
+            lambda t: t.unsqueeze(3)
+            .reshape(b, t.shape[1], self.heads, self.dim_head)
+            .permute(0, 2, 1, 3)
+            .reshape(b * self.heads, t.shape[1], self.dim_head)
+            .contiguous(),
+            (q, k, v),
+        )
+
+        # init the attention op, if required, using the proper dimensions
+        self._maybe_init(q)
+
+        # actually compute the attention, what we cannot get enough of
+        out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=None, op=self.attention_op)
+
+        # TODO: Use this directly in the attention operation, as a bias
+        if exists(mask):
+            raise NotImplementedError
+        out = (
+            out.unsqueeze(0)
+            .reshape(b, self.heads, out.shape[1], self.dim_head)
+            .permute(0, 2, 1, 3)
+            .reshape(b, out.shape[1], self.heads * self.dim_head)
+        )
+
+        stats = torch.cuda.memory_stats(q.device)
+        mem_active = stats['active_bytes.all.current']
+        mem_reserved = stats['reserved_bytes.all.current']
+        mem_free_cuda, _ = torch.cuda.mem_get_info(torch.cuda.current_device())
+        mem_free_torch = mem_reserved - mem_active
+        mem_free_total = mem_free_cuda + mem_free_torch
+
+        gb = 1024 ** 3
+        tensor_size = q.shape[0] * q.shape[1] * k.shape[1] * q.element_size()
+        modifier = 3 if q.element_size() == 2 else 2.5
+        mem_required = tensor_size * modifier
+        steps = 1
+
+
+        if mem_required > mem_free_total:
+            steps = 2**(math.ceil(math.log(mem_required / mem_free_total, 2)))
+            # print(f"Expected tensor size:{tensor_size/gb:0.1f}GB, cuda free:{mem_free_cuda/gb:0.1f}GB "
+            #      f"torch free:{mem_free_torch/gb:0.1f} total:{mem_free_total/gb:0.1f} steps:{steps}")
+
+        if steps > 64:
+            max_res = math.floor(math.sqrt(math.sqrt(mem_free_total / 2.5)) / 8) * 64
+            raise RuntimeError(f'Not enough memory, use lower resolution (max approx. {max_res}x{max_res}). '
+                               f'Need: {mem_required/64/gb:0.1f}GB free, Have:{mem_free_total/gb:0.1f}GB free')
+
+
+
+
+
+        return self.to_out(out)
 
 class CrossAttention(nn.Module):
     r"""
@@ -250,14 +374,12 @@ class CrossAttention(nn.Module):
         return tensor
 
     def forward(self, hidden_states, context=None, mask=None):
-        batch_size, sequence_length, _ = hidden_states.shape
+        batch_size, sequence_length, dim = hidden_states.shape
 
         query = self.to_q(hidden_states)
         context = context if context is not None else hidden_states
         key = self.to_k(context)
         value = self.to_v(context)
-
-        dim = query.shape[-1]
 
         query = self.reshape_heads_to_batch_dim(query)
         key = self.reshape_heads_to_batch_dim(key)
