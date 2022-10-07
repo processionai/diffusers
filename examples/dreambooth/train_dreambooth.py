@@ -347,8 +347,9 @@ def main():
 
             for example in tqdm(
                 sample_dataloader, desc="Generating class images", disable=not accelerator.is_local_main_process
-            ):
-                images = pipeline(example["prompt"]).images
+            ):  
+                with torch.autocast("cuda"):
+                  images = pipeline(example["prompt"]).images
 
                 for i, image in enumerate(images):
                     image.save(class_images_dir / f"{example['index'][i] + cur_class_images}.jpg")
