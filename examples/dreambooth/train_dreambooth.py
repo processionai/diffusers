@@ -1,6 +1,7 @@
 import argparse
 import math
 import os
+
 from pathlib import Path
 from typing import Optional
 
@@ -328,6 +329,7 @@ def main():
         if not class_images_dir.exists():
             class_images_dir.mkdir(parents=True)
         cur_class_images = len(list(class_images_dir.iterdir()))
+        print(f"{class_images_dir} has {cur_class_images} images")
 
         if cur_class_images < args.num_class_images:
             torch_dtype = torch.float16 if accelerator.device.type == "cuda" else torch.float32
@@ -385,6 +387,10 @@ def main():
     vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae")
     unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet")
 
+    # Move text_encode and vae to gpu
+    text_encoder.to(accelerator.device)
+    vae.to(accelerator.device)
+
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
 
@@ -440,12 +446,19 @@ def main():
 
         pixel_values = torch.stack(pixel_values)
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
+        pixel_values = pixel_values.to(accelerator.device)
 
         input_ids = tokenizer.pad({"input_ids": input_ids}, padding=True, return_tensors="pt").input_ids
+        input_ids = input_ids.to(accelerator.device)
+        with torch.no_grad():
+            latents = vae.encode(pixel_values)
+            encoder_hidden_states = text_encoder(input_ids)[0]
 
         batch = {
             "input_ids": input_ids,
             "pixel_values": pixel_values,
+            "latents": latents,
+            "encoder_hidden_states": encoder_hidden_states
         }
         return batch
 
@@ -453,9 +466,16 @@ def main():
         train_dataset, batch_size=args.train_batch_size, shuffle=True, collate_fn=collate_fn
     )
 
+    dataset = list(train_dataloader)
+    del train_dataloader
+    del text_encoder
+    del vae
+    gc.collect()
+    torch.cuda.empty_cache()
+
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(dataset) / args.gradient_accumulation_steps)
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
@@ -467,16 +487,12 @@ def main():
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
 
-    unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        unet, optimizer, train_dataloader, lr_scheduler
+    unet, optimizer, lr_scheduler = accelerator.prepare(
+        unet, optimizer, lr_scheduler
     )
 
-    # Move text_encode and vae to gpu
-    text_encoder.to(accelerator.device)
-    vae.to(accelerator.device)
-
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(dataset) / args.gradient_accumulation_steps)
     if overrode_max_train_steps:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
@@ -492,7 +508,7 @@ def main():
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
-    logger.info(f"  Num batches each epoch = {len(train_dataloader)}")
+    logger.info(f"  Num batches each epoch = {len(dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
@@ -505,11 +521,11 @@ def main():
 
     for epoch in range(args.num_train_epochs):
         unet.train()
-        for step, batch in enumerate(train_dataloader):
+        for step, batch in enumerate(dataset):
             with accelerator.accumulate(unet):
                 # Convert images to latent space
                 with torch.no_grad():
-                    latents = vae.encode(batch["pixel_values"]).latent_dist.sample()
+                    latents = batch["latents"].latent_dist.sample()
                     latents = latents * 0.18215
 
                 # Sample noise that we'll add to the latents
@@ -525,7 +541,7 @@ def main():
 
                 # Get the text embedding for conditioning
                 with torch.no_grad():
-                    encoder_hidden_states = text_encoder(batch["input_ids"])[0]
+                    encoder_hidden_states = batch["encoder_hidden_states"]
 
                 # Predict the noise residual
                 noise_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
