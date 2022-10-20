@@ -473,15 +473,15 @@ class DiffusionPipeline(ConfigMixin):
             init_kwargs[name] = loaded_sub_model  # UNet(...), # DiffusionSchedule(...)
 
         # 4. Potentially add passed objects if expected
-        missing_modules = set(expected_modules) - set(init_kwargs.keys())
-        if len(missing_modules) > 0 and missing_modules <= set(passed_class_obj.keys()):
-            for module in missing_modules:
-                init_kwargs[module] = passed_class_obj[module]
-        elif len(missing_modules) > 0:
-            passed_modules = set(list(init_kwargs.keys()) + list(passed_class_obj.keys()))
-            raise ValueError(
-                f"Pipeline {pipeline_class} expected {expected_modules}, but only {passed_modules} were passed."
-            )
+#        missing_modules = set(expected_modules) - set(init_kwargs.keys())
+#        if len(missing_modules) > 0 and missing_modules <= set(passed_class_obj.keys()):
+#            for module in missing_modules:
+#                init_kwargs[module] = passed_class_obj[module]
+#        elif len(missing_modules) > 0:
+#            passed_modules = set(list(init_kwargs.keys()) + list(passed_class_obj.keys()))
+#            raise ValueError(
+#                f"Pipeline {pipeline_class} expected {expected_modules}, but only {passed_modules} were passed."
+#            )
 
         # 5. Instantiate the pipeline
         model = pipeline_class(**init_kwargs)
