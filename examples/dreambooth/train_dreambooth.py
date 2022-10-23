@@ -612,7 +612,7 @@ def main():
             if global_step >= args.max_train_steps:
                 break
 
-            if args.save_n_steps is not None:
+            if args.save_n_steps >= 200 and not None:
                 do_save = ((global_step+1) % args.save_n_steps) == 0
                 if do_save:
                     ckpt_name = "_step_" + str(global_step+1)
