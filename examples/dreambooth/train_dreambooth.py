@@ -199,8 +199,8 @@ def parse_args():
     parser.add_argument(
         "--save_starting_step",
         type=int,
-        default=1,
-        help=("The step from which it starts counting before saving the checkpoint"),
+        default=0,
+        help=("The step from which it starts counting to save the checkpoint"),
     )
     
 
@@ -302,6 +302,7 @@ class DreamBoothDataset(Dataset):
         return example
 
 
+
 class PromptDataset(Dataset):
     "A simple dataset to prepare the prompts to generate class images on multiple GPUs."
 
@@ -332,7 +333,7 @@ def get_full_repo_name(model_id: str, organization: Optional[str] = None, token:
 def main():
     args = parse_args()
     logging_dir = Path(args.output_dir, args.logging_dir)
-
+    i=args.save_starting_step
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
@@ -621,28 +622,27 @@ def main():
             if global_step >= args.max_train_steps:
                 break
 
-            if args.save_n_steps >= 200 and not None and global_step >= args.save_starting_step:
-                do_save = ((global_step+1) % args.save_n_steps) == 0
-                if do_save:
-                    ckpt_name = "_step_" + str(global_step+1)
-                    # save dir
-                    save_dir = Path(args.output_dir+ckpt_name)
-                    save_dir=str(save_dir)
-                    save_dir=save_dir.replace(" ", "_")                    
-                    if not os.path.exists(save_dir): # create dir if not exists
-                        os.mkdir(save_dir)
-                    inst=save_dir[16:]
-                    inst=inst.replace(" ", "_")
-                    print(" [1;32mSAVING CHECKPOINT: /content/gdrive/MyDrive/"+inst+".ckpt")
-                    # Create the pipeline using the trained modules and save it.
-                    if accelerator.is_main_process:
-                        pipeline = StableDiffusionPipeline.from_pretrained(
-                                            args.pretrained_model_name_or_path, unet=accelerator.unwrap_model(unet)
-                        )
-                        pipeline.save_pretrained(save_dir)
-                        chkpth="/content/gdrive/MyDrive/"+inst+".ckpt"
-                        subprocess.call('python /content/diffusers/scripts/convert_diffusers_to_original_stable_diffusion.py --model_path ' + save_dir + ' --checkpoint_path ' + chkpth + ' --half', shell=True)
-
+            
+            if args.save_n_steps >= 200:
+               if global_step+1 < args.max_train_steps and global_step+1==i:
+                  ckpt_name = "_step_" + str(global_step+1)
+                  save_dir = Path(args.output_dir+ckpt_name)
+                  save_dir=str(save_dir)
+                  save_dir=save_dir.replace(" ", "_")                    
+                  if not os.path.exists(save_dir): # create dir if not exists
+                     os.mkdir(save_dir)
+                  inst=save_dir[16:]
+                  inst=inst.replace(" ", "_")
+                  print(" [1;32mSAVING CHECKPOINT: /content/gdrive/MyDrive/"+inst+".ckpt")
+                  # Create the pipeline using the trained modules and save it.
+                  if accelerator.is_main_process:
+                      pipeline = StableDiffusionPipeline.from_pretrained(
+                                          args.pretrained_model_name_or_path, unet=accelerator.unwrap_model(unet)
+                      )
+                      pipeline.save_pretrained(save_dir)
+                      chkpth="/content/gdrive/MyDrive/"+inst+".ckpt"
+                      subprocess.call('python /content/diffusers/scripts/convert_diffusers_to_original_stable_diffusion.py --model_path ' + save_dir + ' --checkpoint_path ' + chkpth + ' --half', shell=True)
+                      i=i+args.save_n_steps
         accelerator.wait_for_everyone()
 
     # Create the pipeline using using the trained modules and save it.
