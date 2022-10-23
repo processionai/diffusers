@@ -194,6 +194,15 @@ def parse_args():
         default=None,
         help=("Save the model every n global_steps"),
     )
+    
+    
+    parser.add_argument(
+        "--save_starting_step",
+        type=int,
+        default=1,
+        help=("The step from which it starts counting before saving the checkpoint"),
+    )
+    
 
     parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
 
@@ -612,7 +621,7 @@ def main():
             if global_step >= args.max_train_steps:
                 break
 
-            if args.save_n_steps >= 200 and not None:
+            if args.save_n_steps >= 200 and not None and global_step >= args.save_starting_step:
                 do_save = ((global_step+1) % args.save_n_steps) == 0
                 if do_save:
                     ckpt_name = "_step_" + str(global_step+1)
