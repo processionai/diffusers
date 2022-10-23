@@ -4,6 +4,7 @@ import math
 import os
 from pathlib import Path
 from typing import Optional
+import subprocess
 
 import torch
 import torch.nn.functional as F
@@ -186,6 +187,14 @@ def parse_args():
             "and an Nvidia Ampere GPU."
         ),
     )
+
+    parser.add_argument(
+        "--save_n_steps",
+        type=int,
+        default=None,
+        help=("Save the model every n global_steps"),
+    )
+
     parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
 
     args = parser.parse_args()
@@ -602,6 +611,28 @@ def main():
 
             if global_step >= args.max_train_steps:
                 break
+
+            if args.save_n_steps is not None:
+                do_save = ((global_step+1) % args.save_n_steps) == 0
+                if do_save:
+                    ckpt_name = "_step_" + str(global_step+1)
+                    # save dir
+                    save_dir = Path(args.output_dir+ckpt_name)
+                    save_dir=str(save_dir)
+                    save_dir=save_dir.replace(" ", "_")                    
+                    if not os.path.exists(save_dir): # create dir if not exists
+                        os.mkdir(save_dir)
+                    inst=save_dir[16:]
+                    inst=inst.replace(" ", "_")
+                    print(" [1;32mSAVING CHECKPOINT: /content/gdrive/MyDrive/"+inst+".ckpt")
+                    # Create the pipeline using the trained modules and save it.
+                    if accelerator.is_main_process:
+                        pipeline = StableDiffusionPipeline.from_pretrained(
+                                            args.pretrained_model_name_or_path, unet=accelerator.unwrap_model(unet)
+                        )
+                        pipeline.save_pretrained(save_dir)
+                        chkpth="/content/gdrive/MyDrive/"+inst+".ckpt"
+                        subprocess.call('python /content/diffusers/scripts/convert_diffusers_to_original_stable_diffusion.py --model_path ' + save_dir + ' --checkpoint_path ' + chkpth + ' --half', shell=True)
 
         accelerator.wait_for_everyone()
 
