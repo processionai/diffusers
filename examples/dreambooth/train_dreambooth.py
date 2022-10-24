@@ -658,13 +658,15 @@ def main():
                   print(" [1;32mSAVING CHECKPOINT: /content/gdrive/MyDrive/"+inst+".ckpt")
                   # Create the pipeline using the trained modules and save it.
                   if accelerator.is_main_process:
-                      pipeline = StableDiffusionPipeline.from_pretrained(
-                                          args.pretrained_model_name_or_path, unet=accelerator.unwrap_model(unet)
-                      )
-                      pipeline.save_pretrained(save_dir)
-                      chkpth="/content/gdrive/MyDrive/"+inst+".ckpt"
-                      subprocess.call('python /content/diffusers/scripts/convert_diffusers_to_original_stable_diffusion.py --model_path ' + save_dir + ' --checkpoint_path ' + chkpth + ' --half', shell=True)
-                      i=i+args.save_n_steps
+                     pipeline = StableDiffusionPipeline.from_pretrained(
+                           args.pretrained_model_name_or_path,
+                           unet=accelerator.unwrap_model(unet),
+                           text_encoder=accelerator.unwrap_model(text_encoder),
+                     )
+                     pipeline.save_pretrained(save_dir)
+                     chkpth="/content/gdrive/MyDrive/"+inst+".ckpt"
+                     subprocess.call('python /content/diffusers/scripts/convert_diffusers_to_original_stable_diffusion.py --model_path ' + save_dir + ' --checkpoint_path ' + chkpth + ' --half', shell=True)
+                     i=i+args.save_n_steps
         accelerator.wait_for_everyone()
 
     # Create the pipeline using using the trained modules and save it.
