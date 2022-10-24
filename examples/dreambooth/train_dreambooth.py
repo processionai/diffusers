@@ -296,8 +296,13 @@ class DreamBoothDataset(Dataset):
         
         if self.image_captions_filename:
             filename = Path(path).stem
-            instance_prompt = instance_prompt + " " + filename
-            print(instance_prompt)
+            pt=''.join([i for i in filename if not i.isdigit()])
+            pt=pt.replace("_"," ")
+            pt=pt.replace("(","")
+            pt=pt.replace(")","")
+            instance_prompt = instance_prompt + " " + pt
+            sys.stdout.write(" [0;32m" +instance_prompt+" [0m")
+            sys.stdout.flush()
 
 
         example["instance_images"] = self.image_transforms(instance_image)
