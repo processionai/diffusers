@@ -200,9 +200,15 @@ def parse_args():
         "--save_starting_step",
         type=int,
         default=0,
-        help=("The step from which it starts counting to save the checkpoint"),
+        help=("The step from which it starts saving intermediary checkpoints"),
     )
     
+    
+    parser.add_argument(
+        "--image_captions_filename",
+        action="store_true",
+        help="Get captions from filename",
+    )    
 
     parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
 
@@ -234,6 +240,7 @@ class DreamBoothDataset(Dataset):
         instance_data_root,
         instance_prompt,
         tokenizer,
+        args,
         class_data_root=None,
         class_prompt=None,
         size=512,
@@ -242,6 +249,7 @@ class DreamBoothDataset(Dataset):
         self.size = size
         self.center_crop = center_crop
         self.tokenizer = tokenizer
+        self.image_captions_filename = None
 
         self.instance_data_root = Path(instance_data_root)
         if not self.instance_data_root.exists():
@@ -252,6 +260,9 @@ class DreamBoothDataset(Dataset):
         self.instance_prompt = instance_prompt
         self._length = self.num_instance_images
 
+        if args.image_captions_filename:
+            self.image_captions_filename = True
+        
         if class_data_root is not None:
             self.class_data_root = Path(class_data_root)
             self.class_data_root.mkdir(parents=True, exist_ok=True)
@@ -276,12 +287,22 @@ class DreamBoothDataset(Dataset):
 
     def __getitem__(self, index):
         example = {}
-        instance_image = Image.open(self.instance_images_path[index % self.num_instance_images])
+        path = self.instance_images_path[index % self.num_instance_images]
+        instance_image = Image.open(path)
         if not instance_image.mode == "RGB":
             instance_image = instance_image.convert("RGB")
+            
+        instance_prompt = self.instance_prompt
+        
+        if self.image_captions_filename:
+            filename = Path(path).stem
+            instance_prompt = instance_prompt + " " + filename
+            print(instance_prompt)
+
+
         example["instance_images"] = self.image_transforms(instance_image)
         example["instance_prompt_ids"] = self.tokenizer(
-            self.instance_prompt,
+            instance_prompt,
             padding="do_not_pad",
             truncation=True,
             max_length=self.tokenizer.model_max_length,
@@ -466,6 +487,7 @@ def main():
         tokenizer=tokenizer,
         size=args.resolution,
         center_crop=args.center_crop,
+        args=args,
     )
 
     def collate_fn(examples):
