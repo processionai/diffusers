@@ -204,7 +204,14 @@ def parse_args():
         help=("The step from which it starts saving intermediary checkpoints"),
     )
     
-    
+    parser.add_argument(
+        "--stop_text_encoder_training",
+        type=int,
+        default=1000000,
+        help=("The step at which the text_encoder is no longer trained"),
+    )
+
+
     parser.add_argument(
         "--image_captions_filename",
         action="store_true",
@@ -652,7 +659,26 @@ def main():
             if global_step >= args.max_train_steps:
                 break
 
-            
+            if args.train_text_encoder and global_step == args.stop_text_encoder_training and global_step >= 30:
+              if accelerator.is_main_process:
+                print(" [0;32m" +" Freezing the text_encoder ..."+" [0m")                
+                tmp_dir=args.output_dir+'/tmp'
+                frz_dir=args.output_dir + "/text_encoder_frozen"
+                if os.path.exists(tmp_dir):
+                  subprocess.call('rm -r '+ tmp_dir, shell=True)  
+                os.mkdir(tmp_dir)
+                if os.path.exists(frz_dir):
+                  subprocess.call('rm -r '+ frz_dir, shell=True)
+                os.mkdir(frz_dir)
+                pipeline = StableDiffusionPipeline.from_pretrained(
+                      args.pretrained_model_name_or_path,
+                      unet=accelerator.unwrap_model(unet),           
+                      text_encoder=accelerator.unwrap_model(text_encoder),
+                )
+                pipeline.save_pretrained(tmp_dir)
+                subprocess.call('mv ' + tmp_dir + "/text_encoder/*.* " + frz_dir, shell=True)
+                subprocess.call('rm -r '+ tmp_dir, shell=True)                                
+
             if args.save_n_steps >= 200:
                if global_step < args.max_train_steps and global_step+1==i:
                   ckpt_name = "_step_" + str(global_step+1)
@@ -672,10 +698,16 @@ def main():
                            text_encoder=accelerator.unwrap_model(text_encoder),
                      )
                      pipeline.save_pretrained(save_dir)
+                     if args.train_text_encoder and os.path.exists(frz_dir):
+                        subprocess.call('rm -r '+save_dir+'/text_encoder/*.*', shell=True)
+                        subprocess.call('cp -f '+frz_dir +'/*.* '+ save_dir+'/text_encoder', shell=True)                     
                      chkpth="/content/gdrive/MyDrive/"+inst+".ckpt"
                      subprocess.call('python /content/diffusers/scripts/convert_diffusers_to_original_stable_diffusion.py --model_path ' + save_dir + ' --checkpoint_path ' + chkpth + ' --half', shell=True)
                      i=i+args.save_n_steps
+            
+                     
         accelerator.wait_for_everyone()
+
 
     # Create the pipeline using using the trained modules and save it.
     if accelerator.is_main_process:
@@ -685,6 +717,11 @@ def main():
             text_encoder=accelerator.unwrap_model(text_encoder),
         )
         pipeline.save_pretrained(args.output_dir)
+        if args.train_text_encoder and os.path.exists(frz_dir):
+           subprocess.call('mv -f '+frz_dir +'/*.* '+ args.output_dir+'/text_encoder', shell=True)
+           subprocess.call('rm -r '+ frz_dir, shell=True) 
+
+
 
         if args.push_to_hub:
             repo.push_to_hub(commit_message="End of training", blocking=False, auto_lfs_prune=True)
