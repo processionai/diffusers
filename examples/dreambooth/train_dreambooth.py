@@ -680,7 +680,7 @@ def main():
                 subprocess.call('rm -r '+ tmp_dir, shell=True)                                
 
             if args.save_n_steps >= 200:
-               if global_step < args.max_train_steps and global_step+1==i:
+               if global_step < args.max_train_steps-100 and global_step+1==i:
                   ckpt_name = "_step_" + str(global_step+1)
                   save_dir = Path(args.output_dir+ckpt_name)
                   save_dir=str(save_dir)
@@ -698,6 +698,7 @@ def main():
                            text_encoder=accelerator.unwrap_model(text_encoder),
                      )
                      pipeline.save_pretrained(save_dir)
+                     frz_dir=args.output_dir + "/text_encoder_frozen"                    
                      if args.train_text_encoder and os.path.exists(frz_dir):
                         subprocess.call('rm -r '+save_dir+'/text_encoder/*.*', shell=True)
                         subprocess.call('cp -f '+frz_dir +'/*.* '+ save_dir+'/text_encoder', shell=True)                     
