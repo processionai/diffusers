@@ -489,7 +489,7 @@ def main():
     )
 
     noise_scheduler = DDPMScheduler(
-        noise_scheduler = DDPMScheduler.from_config(args.pretrained_model_name_or_path, subfolder="scheduler")
+        beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", num_train_timesteps=1000
     )
 
     train_dataset = DreamBoothDataset(
