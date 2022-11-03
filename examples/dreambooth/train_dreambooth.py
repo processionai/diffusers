@@ -471,7 +471,10 @@ def main():
         tokenizer = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder="tokenizer")
 
     # Load models and create wrapper for stable diffusion
-    text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="text_encoder")
+    if args.train_only_unet:
+      text_encoder = CLIPTextModel.from_pretrained(args.output_dir, subfolder="text_encoder_trained")
+    else:
+      text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="text_encoder")
     vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae")
     unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet")
 
@@ -759,7 +762,6 @@ def main():
         )
         pipeline.save_pretrained(args.output_dir)
         txt_dir=args.output_dir + "/text_encoder_trained"
-        subprocess.call('cp '+txt_dir+'/*.* '+args.output_dir+'/text_encoder', shell=True)
         subprocess.call('rm -r '+txt_dir, shell=True)
      
       else:
