@@ -728,9 +728,6 @@ def main():
                            text_encoder=accelerator.unwrap_model(text_encoder),
                      )
                      pipeline.save_pretrained(save_dir)
-                     if args.train_only_unet:
-                       txt_dir=args.output_dir + "/text_encoder_trained"
-                       subprocess.call('cp '+txt_dir+'/*.* '+save_dir+'/text_encoder', shell=True)
                      frz_dir=args.output_dir + "/text_encoder_frozen"                    
                      if args.train_text_encoder and os.path.exists(frz_dir):
                         subprocess.call('rm -r '+save_dir+'/text_encoder/*.*', shell=True)
