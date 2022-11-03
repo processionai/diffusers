@@ -192,7 +192,7 @@ def parse_args():
     parser.add_argument(
         "--save_n_steps",
         type=int,
-        default=None,
+        default=1,
         help=("Save the model every n global_steps"),
     )
     
@@ -200,7 +200,7 @@ def parse_args():
     parser.add_argument(
         "--save_starting_step",
         type=int,
-        default=0,
+        default=1,
         help=("The step from which it starts saving intermediary checkpoints"),
     )
     
