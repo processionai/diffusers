@@ -707,7 +707,7 @@ def main():
                     unet=accelerator.unwrap_model(unet),
                     text_encoder=accelerator.unwrap_model(text_encoder),
                 )
-                pipeline.text_encoder.save_pretrained(save_dir)
+                pipeline.text_encoder.save_pretrained(frz_dir)
                          
             if args.save_n_steps >= 200:
                if global_step < args.max_train_steps-100 and global_step+1==i:
