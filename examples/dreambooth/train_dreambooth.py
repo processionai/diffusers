@@ -472,7 +472,7 @@ def main():
 
     # Load models and create wrapper for stable diffusion
     if args.train_only_unet:
-      if os.path.exists(str(args.output_dir+"/text_encoder_trained)):
+      if os.path.exists(str(args.output_dir+"/text_encoder_trained")):
         text_encoder = CLIPTextModel.from_pretrained(args.output_dir, subfolder="text_encoder_trained")
       else:
         text_encoder = CLIPTextModel.from_pretrained(args.output_dir, subfolder="text_encoder")
