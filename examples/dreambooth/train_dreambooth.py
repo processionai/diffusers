@@ -474,8 +474,10 @@ def main():
     if args.train_only_unet:
       if os.path.exists(str(args.output_dir+"/text_encoder_trained")):
         text_encoder = CLIPTextModel.from_pretrained(args.output_dir, subfolder="text_encoder_trained")
-      else:
+      elif os.path.exists(str(args.output_dir+"/text_encoder")):
         text_encoder = CLIPTextModel.from_pretrained(args.output_dir, subfolder="text_encoder")
+      else:
+        text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="text_encoder")
     else:
       text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="text_encoder")
     vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae")
